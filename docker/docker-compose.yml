@@ -14,10 +14,10 @@ services:
       - OPAL_DEMO_USER_PASSWORD=Demo_password1!
       - OPAL_DEMO_PROJECT=DEMO
       - OPAL_DEMO_TABLE=CNSIM1
-      - OPAL_DEMO_SOURCE_DATA_URL=https://raw.githubusercontent.com/OllyButters/ds_data/main/CNSIM/CNSIM1.csv
+      - OPAL_DEMO_SOURCE_DATA_URL=https://raw.githubusercontent.com/FederatedMethods/ds_sample_data/main/CNSIM/CNSIM1.csv
       - OPAL_COHORT_PROJECT=COHORT
       - OPAL_COHORT_TABLE=conditions1
-      - OPAL_COHORT_SOURCE_DATA_URL=https://raw.githubusercontent.com/OllyButters/ds_data/main/synthea/conditionsa.csv
+      - OPAL_COHORT_SOURCE_DATA_URL=https://raw.githubusercontent.com/FederatedMethods/ds_sample_data/main/synthea/conditionsa.csv
       - MONGO_HOST=mongodb
       - MONGO_PORT=27017
       - MONGODATA_DATABASE=mongodb
