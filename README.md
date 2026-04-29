@@ -1,6 +1,6 @@
-# datashield_pcr
+# DataSHIELD development environment install
 
-DataSHIELD for the prostate cancer research project
+DataSHIELD install environment
 
 ## Prerequisites
 
