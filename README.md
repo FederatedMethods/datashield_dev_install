@@ -1,97 +1,86 @@
-# DataSHIELD development environment install
+# DataSHIELD development environment
 
-DataSHIELD install environment
+Run a local [Opal](https://www.obiba.org/pages/products/opal/) server with a [Rock](https://github.com/obiba/rock) R server and sample data (`CNSIM`) using Docker Compose, ready for DataSHIELD client testing.
 
-## Prerequisites
+## Quick start
 
-### Docker
+Requires [Docker](https://docs.docker.com/get-started/get-docker/) with Compose >= 2.30 (check with `docker compose version`). Prefix commands with `sudo` on Linux if your user is not in the `docker` group.
 
-We need docker-ce, docker-ce-cli, docker-compose-plugin, plus their prerequisites.
+    git clone https://github.com/FederatedMethods/datashield_dev_install
+    cd datashield_dev_install/docker
+    docker compose up -d
 
-Follow the instructions here: https://docs.docker.com/engine/install/ubuntu/ to add the apt install.
+The first start downloads the sample data and sets everything up, which takes a few minutes. Follow progress with `docker compose logs -f opal`.
 
-You can verify docker is set up by running:
+| What | Where / credentials |
+|---|---|
+| Opal web interface | <http://localhost:8880> (or <https://localhost:8843>, self-signed certificate) |
+| Administrator | `administrator` / `password` |
+| DataSHIELD user | `dsuser` / `P@ssw0rd` |
+| Data | project `CNSIM`, tables `CNSIM.CNSIM1` and `CNSIM.CNSIM2` |
 
-    sudo docker run hello-world
+These credentials are for local development only.
 
-## DataSHIELD install
+## Test from R
 
-It's all done via the docker compose file, so just run `sudo docker compose up -d` from within the folder with the `docker-compose.yml` file in and you should be good to go. You will want to edit a couple of things first though:
+Install the client packages:
 
-- the opal volume should map to somewhere on your host machine. Something like `/filestore/opal:/srv` will map the `/filestore/opal` folder on the host to the `/srv` folder in the container. This is where the opal file data will be stored e.g. logs.
-- there are vaious usernames and passwords in here which should be managed properly elsewhere.
-- the csr-allowed setting is needed as it sometimes appears that cross site scripting is occuring when pages are passing through the reverse proxy. Specify expected `host:port` pairs here.
+    install.packages("dsBaseClient", repos = c(getOption("repos"), "https://cran.obiba.org"), dependencies = TRUE)
 
-This will get you to the point where it is all running locally, you will be able to connect to the opal server web interface (assuming you are on the VM where it was installed) at
+Then run `client/client.R` (short check) or `client/sandbox.R` (longer analysis using both tables). They connect to `http://localhost:8880` as `dsuser`; override with the `DS_URL`, `DS_USER` and `DS_PASSWORD` environment variables.
 
-    http://localhost:8880
-    https://localhost:8843
+## Configuration
 
-## Reverse proxy - nginx
+Copy `docker/.env.example` to `docker/.env` and uncomment what you want to change: Opal image, passwords, Java memory, project and table names (`CNSIM_PROJECT`, `CNSIM_TABLES`). Each table is downloaded from `<CNSIM_BASE_URL>/<table>.csv`.
 
-If you installed this on a remote host then you will likely need to add a reverse proxy to the front with a valid SSL certificate.
+Setup (`customise.sh`) runs only once per fresh volume, so after changing users, projects or tables, reset first:
 
-    sudo apt install nginx
+    docker compose down -v
+    docker compose up -d
 
-This should start nginx also. If you go to the hostname or IP address of the HOST VM from outside of the VM it should show a welcome to nginx landing page.
+`-v` deletes the `opal-data` and `mongo-data` volumes. Always keep the two together: wipe both or neither.
 
-For development a self signed certificate is fine. A good guide for this is here:
+## Tracing with Jaeger (OpenTelemetry)
 
-<https://www.digitalocean.com/community/tutorials/how-to-create-a-self-signed-ssl-certificate-for-nginx-in-ubuntu>
+`docker/docker-compose.jaeger.yml` adds [Jaeger](https://www.jaegertracing.io/) and turns on Opal's OpenTelemetry trace export ([obiba/opal#4194](https://github.com/obiba/opal/pull/4194)):
 
-Once you have done this, create a file in `/etc/nginx/sites-available` and put the contents of `nginx/datashield1` into it. You will need to edit the hostname to match the fqdn of your host VM, or use its IP address. Softlink to it :
+    docker compose -f docker-compose.yml -f docker-compose.jaeger.yml up -d
 
-    sudo ln -s /etc/nginx/sites-available/datashield1 /etc/nginx/sites-enabled/datashield1
+Run one of the client scripts, then open <http://localhost:16686> and select the service `opal-local`. The override defaults to the `obiba/opal:snapshot` image; if no traces appear, set `OPAL_IMAGE` in `.env` to a build that includes the PR. Without the override nothing is exported.
 
-Remove the default enabled config:
+## Troubleshooting
 
-    sudo rm /etc/nginx/sites-enabled/default
+- **No project or user after start-up:** read the set-up log with `docker compose exec opal cat /srv/customisation.log`. Re-run set-up without wiping data using `docker compose exec -e FORCE=1 opal bash /customise.sh`.
+- **Container logs:** `docker compose logs opal` (or `rock`, `mongodb`).
+- **Fresh start:** `docker compose down -v`, then `docker compose up -d`. If a container was stopped uncleanly (e.g. Ctrl-C on `docker compose up`), check `docker ps -a` for leftovers; `docker compose up` restarts old containers rather than creating new ones.
+- **`post_start` errors on `up`:** your Docker Compose is older than 2.30; upgrade it.
 
-Test your config and reload nginx
+## Running on a remote host
 
-    sudo nginx -t
-    sudo systemctl reload nginx
+To use this on a remote VM, put a reverse proxy with an SSL certificate in front of Opal:
 
-You should now be able to log into the opal web interface from outside of the host VM (username/password in `docker-compose.yml` file). If you have used a self signed certificate as above then you will likely get a warning about the site being insecure (your browswer can't validate the certificate as it was not generated by someone that it knows it can trust). Just accept this for this test/dev work.
+1. Install nginx (`sudo apt install nginx`) and create a certificate. A self-signed one is fine for development: [DigitalOcean guide](https://www.digitalocean.com/community/tutorials/how-to-create-a-self-signed-ssl-certificate-for-nginx-in-ubuntu).
+2. Copy `nginx/datashield1.conf` to `/etc/nginx/sites-available/datashield1` and set `server_name` to your host name or IP.
+3. Enable it and reload:
 
-## Firewall
+        sudo ln -s /etc/nginx/sites-available/datashield1 /etc/nginx/sites-enabled/datashield1
+        sudo rm /etc/nginx/sites-enabled/default
+        sudo nginx -t && sudo systemctl reload nginx
 
-If using Uncomplicated Firewall (UFW) on the host machine, you will need to allow the appropriate ports. For example:
+4. In `docker/docker-compose.yml`, uncomment `CSRF_ALLOWED` and set it to the `host:port` your browser uses (needed because requests through a proxy can look like cross-site requests). Then recreate Opal: `docker compose up -d --force-recreate opal`.
+5. If you use UFW, allow HTTPS: `sudo ufw allow 'Nginx HTTPS'`.
 
-    sudo ufw status
-    sudo ufw app list
-    sudo ufw allow 'Nginx HTTPS'
+Browsers will warn about a self-signed certificate; accept it for development.
 
-## Docker commands
+## Known limitations
 
-When developing, it is useful to be able to delete everything and start over.
+- Group permissions do not work as expected, so permissions are granted to individual users.
+- Tables are imported with every variable as `decimal`, so categorical variables (e.g. `GENDER`) are numeric rather than factors. Functions that need factors, such as `ds.table`, need the variable converted first (e.g. with `ds.asFactor`).
 
-    sudo docker compose down
-    sudo rm -r <PATH TO OPAL DATA ON THE HOST>
-    sudo docker compose up -d
+## Further resources
 
-Occasionally when doing development a container may get STOPPED (e.g. if run `docker compose up` then CTRL-C in browser). When running `docker compose up` after this the stopped containers will be RESTARTED, not made fresh from the image. If you've deleted stuff this can lead to inconsistencies. It's good to check 
-
-    sudo docker ps -a
-
-to check if old containers hanging around, and 
-
-    sudo docker system prune
-
-to tidy up.
-
-Sometimes is useful to be able to log into the opal server and check the logs. This can be done with the following command:
-
-    sudo docker exec -it <container ID> bash
-
-## Client testing
-
-Once everything is up and running server side the next test to see if you can connect to the server from the client side. There is an example script in the `client` folder which can be run from the client side. This will connect to the server and run a simple test. You will need to install the `dsBaseClient` package. This can be done with the following command:
-
-    install.packages("dsBaseClient", repos = "https://cran.obiba.org")
-
-
-## To do:
-
-- Could add a reverse proxy to the docker-compose file. How to manage the SSL certificate though?
-- I can't get group permission to work properly. Having to add individual users.
+- [DataSHIELD wiki](https://wiki.datashield.org) and [datashield.org](https://www.datashield.org): documentation, tutorials, and the list of available packages
+- [Opal documentation](https://opaldoc.obiba.org), including the [Python client](https://opaldoc.obiba.org/en/latest/python-user-guide/index.html) used by `customise.sh`
+- [obiba/docker-opal](https://github.com/obiba/docker-opal): the official Opal Docker images and examples
+- [FederatedMethods/ds_sample_data](https://github.com/FederatedMethods/ds_sample_data): the sample data used here
+- [Jaeger documentation](https://www.jaegertracing.io/docs/): for exploring traces
