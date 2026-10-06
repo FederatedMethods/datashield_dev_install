@@ -1,0 +1,28 @@
+# Adds Jaeger and turns on Opal's OpenTelemetry trace export.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.jaeger.yml up -d
+#
+# or set COMPOSE_FILE=docker-compose.yml:docker-compose.jaeger.yml in .env.
+# Jaeger UI: http://localhost:16686  (service name: opal-local)
+#
+# The Opal image must contain the OpenTelemetry export. The default below is
+# v6.0.1; if no traces appear, set OPAL_IMAGE to a build with PR #4194.
+services:
+  opal:
+    image: ${OPAL_IMAGE:-obiba/opal:6.0.1}
+    environment:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
+      - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+      - OTEL_SERVICE_NAME=opal-local
+      # Jaeger stores traces only
+      - OTEL_LOGS_EXPORTER=none
+      - OTEL_METRICS_EXPORTER=none
+    depends_on:
+      jaeger:
+        condition: service_started
+
+  jaeger:
+    image: jaegertracing/jaeger:latest
+    ports:
+      - "16686:16686"   # Jaeger UI
+      - "4318:4318"     # OTLP/HTTP, only needed for senders running on the host
