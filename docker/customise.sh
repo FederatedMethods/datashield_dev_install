@@ -1,95 +1,114 @@
 #!/usr/bin/env bash
 
-# This script is run by the opal container on startup.
-# There are some values which are set as ENV VARS in the container which are set in opal-deployment.yaml
-# The rest come from the values.yaml file.
-
+# Run inside the opal container after start (docker compose `post_start`).
+# Creates the demo user, DataSHIELD permission, the CNSIM project and its tables.
+#
+# Output is also written to /srv/customisation.log (inside the opal-data volume):
+#   docker compose exec opal cat /srv/customisation.log
+# Re-run by hand (ignoring any earlier success):
+#   docker compose exec -e FORCE=1 opal bash /customise.sh
+#
 # https://opaldoc.obiba.org/en/latest/python-user-guide/index.html
 
-touch /doing_local_customisation.txt
+exec > >(tee -a /srv/customisation.log) 2>&1
+echo "=== customise.sh started $(date) ==="
 
-# wget is not installed in the base docker image so add it here
-apt update
-apt install wget
+MARKER=/srv/.local_customisation_done
+if [ -f "$MARKER" ] && [ -z "$FORCE" ]; then
+    echo "Customisation: already done, skipping (use FORCE=1 to run again)."
+    exit 0
+fi
 
-# Check opal python client is installed
-whereis opal
+ADMIN_USER=administrator
+OPAL_URL=http://localhost:8080 # must match port on docker-compose.yml
 
-echo "Check opal has started before trying to add data etc"
-until opal system --user administrator --password $OPAL_ADMINISTRATOR_PASSWORD --version
+# wget is not installed in the base docker image (also used below for checks)
+if ! command -v wget >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq
+    apt-get install -y -qq wget
+fi
+
+# Run an opal client command as administrator, retrying a few times because
+# Opal can still be initialising shortly after it first answers.
+# usage: opalc <description> <opal subcommand and args...>
+opalc() {
+    local desc="$1"; shift
+    local i
+    for i in 1 2 3; do
+        if opal "$1" --user "$ADMIN_USER" --password "$OPAL_ADMINISTRATOR_PASSWORD" "${@:2}"; then
+            echo "OK: $desc"
+            return 0
+        fi
+        echo "RETRY $i/3: $desc"
+        sleep 5
+    done
+    echo "FAILED: $desc"
+    return 1
+}
+
+# Does this Opal web service path answer for the administrator?
+ws_exists() {
+    wget -q -O /dev/null --user "$ADMIN_USER" --password "$OPAL_ADMINISTRATOR_PASSWORD" \
+        --auth-no-challenge "$OPAL_URL/ws$1"
+}
+
+echo "Waiting for Opal to answer..."
+until opal system --user "$ADMIN_USER" --password "$OPAL_ADMINISTRATOR_PASSWORD" --version
 do
     echo "Customisation: Opal not up yet, sleeping..."
-    sleep 30
+    sleep 5
 done
-
-
-# Most of these will just default to localhost
+# Opal answers before it has finished initialising (first-login home folder,
+# DataSHIELD profile); give it a moment.
+sleep 15
 
 # Get the verion of opal
 echo "Opal version:"
-opal system --user administrator --password $OPAL_ADMINISTRATOR_PASSWORD --version
+opal system --user administrator --password "$OPAL_ADMINISTRATOR_PASSWORD" --version
 
-# Add the NORMAL DEMO_USER as defined in the docker_compose.yml file
-opal user --user administrator --password $OPAL_ADMINISTRATOR_PASSWORD --add --name $OPAL_DEMO_USER_NAME --upassword $OPAL_DEMO_USER_PASSWORD
+# Adding something that already exists fails; that is fine, the checks at the end decide.
+opalc "add user $OPAL_DEMO_USER_NAME" user --add --name "$OPAL_DEMO_USER_NAME" --upassword "$OPAL_DEMO_USER_PASSWORD"
 
-# Enable this user to be able to run DataSHIELD functions. Does not grant access to any data though.
-opal perm-datashield --user administrator --password $OPAL_ADMINISTRATOR_PASSWORD --type USER --subject $OPAL_DEMO_USER_NAME --permission use --add
-
-###########################################################################
-# CNSIM DEMO DATA
-###########################################################################
-
-# Add a project
-opal project --user administrator --password $OPAL_ADMINISTRATOR_PASSWORD --add --name $OPAL_DEMO_PROJECT --database mongodb
-#opal project --user administrator --password $OPAL_ADMINISTRATOR_PASSWORD --add --name $OPAL_DEMO_PROJECT --database mysqldb
-
-# Add the CNSIM1 data to the project
-cd /tmp
-mkdir opal-config-temp
-cd opal-config-temp
-pwd
-wget $OPAL_DEMO_SOURCE_DATA_URL
-
-opal_fs_path="/home/administrator"
-opal_file_path="$opal_fs_path/`basename $OPAL_DEMO_SOURCE_DATA_URL`"
-
-opal file --user administrator --password $OPAL_ADMINISTRATOR_PASSWORD -up `basename $OPAL_DEMO_SOURCE_DATA_URL` $opal_fs_path
-
-opal import-csv --user administrator --password $OPAL_ADMINISTRATOR_PASSWORD --destination $OPAL_DEMO_PROJECT --path $opal_file_path  --tables $OPAL_DEMO_TABLE --separator , --type Participant --valueType decimal
-
-cd ..
-rm -rf opal-config-temp
-
-# Add permission to demo user to use the demo table, but not be able to see the data in the web interface.
-opal perm-table --user administrator --password password --type USER --project $OPAL_DEMO_PROJECT --subject $OPAL_DEMO_USER_NAME --permission view --add --tables $OPAL_DEMO_TABLE
-
+# Lets the user run DataSHIELD functions. Does not grant access to any data.
+opalc "DataSHIELD use permission for $OPAL_DEMO_USER_NAME" perm-datashield --type USER --subject "$OPAL_DEMO_USER_NAME" --permission use --add
 
 ###########################################################################
-# SYNTHEA DEMO DATA
+# CNSIM PROJECT: one table per name in CNSIM_TABLES, downloaded from
+# $CNSIM_BASE_URL/<table>.csv (e.g. CNSIM.CNSIM1 and CNSIM.CNSIM2)
 ###########################################################################
 
-# Add a project
-#opal project --user administrator --password $OPAL_ADMINISTRATOR_PASSWORD --add --name $OPAL_COHORT_PROJECT --database mongodb
-##opal project --user administrator --password $OPAL_ADMINISTRATOR_PASSWORD --add --name $OPAL_COHORT_PROJECT --database mysqldb
+opalc "add project $CNSIM_PROJECT" project --add --name "$CNSIM_PROJECT" --database mongodb
 
-# Add the COHORT data to the project
-#cd /tmp
-#mkdir opal-config-temp
-#cd opal-config-temp
-#pwd
-#wget $OPAL_COHORT_SOURCE_DATA_URL
+for table in $CNSIM_TABLES
+do
+    mkdir -p /tmp/opal-config-temp
+    cd /tmp/opal-config-temp || exit 1
+    rm -f "$table.csv"
+    wget -q "$CNSIM_BASE_URL/$table.csv" || echo "FAILED: download $CNSIM_BASE_URL/$table.csv"
 
-#opal_fs_path="/home/administrator"
-#opal_file_path="$opal_fs_path/`basename $OPAL_COHORT_SOURCE_DATA_URL`"
+    opalc "upload $table.csv" file -up "$table.csv" /home/administrator
+    opalc "import $CNSIM_PROJECT.$table" import-csv --destination "$CNSIM_PROJECT" --path "/home/administrator/$table.csv" --tables "$table" --separator , --type Participant --valueType decimal
+    # Demo user can use the table in DataSHIELD, but not see the data in the web interface.
+    opalc "view permission on $CNSIM_PROJECT.$table" perm-table --type USER --project "$CNSIM_PROJECT" --subject "$OPAL_DEMO_USER_NAME" --permission view --add --tables "$table"
 
-#opal file --user administrator --password $OPAL_ADMINISTRATOR_PASSWORD -up `basename $OPAL_COHORT_SOURCE_DATA_URL` $opal_fs_path
+    cd / && rm -rf /tmp/opal-config-temp
+done
 
-#opal import-csv --user administrator --password $OPAL_ADMINISTRATOR_PASSWORD --destination $OPAL_COHORT_PROJECT --path $opal_file_path  --tables $OPAL_COHORT_TABLE --separator , --type Participant --valueType text
+###########################################################################
+# Check the result; only mark as done if everything is really there
+###########################################################################
+ok=1
+ws_exists "/project/$CNSIM_PROJECT" && echo "CHECK OK: project $CNSIM_PROJECT" || { echo "CHECK FAILED: project $CNSIM_PROJECT"; ok=0; }
+for table in $CNSIM_TABLES
+do
+    ws_exists "/datasource/$CNSIM_PROJECT/table/$table" && echo "CHECK OK: table $CNSIM_PROJECT.$table" || { echo "CHECK FAILED: table $CNSIM_PROJECT.$table"; ok=0; }
+done
 
-#cd ..
-#rm -rf opal-config-temp
-
-# Add permission to demo user to use the demo table, but not be able to see the data in the web interface.
-#opal perm-table --user administrator --password password --type USER --project $OPAL_COHORT_PROJECT --subject $OPAL_DEMO_USER_NAME --permission view --add --tables $OPAL_COHORT_TABLE
-
-touch /finished_local_customisation.txt
+if [ "$ok" = 1 ]; then
+    touch /finished_local_customisation.txt "$MARKER"
+    echo "=== customise.sh finished OK ==="
+else
+    echo "=== customise.sh finished WITH FAILURES: see messages above; run again with FORCE=1 ==="
+    exit 1
+fi
