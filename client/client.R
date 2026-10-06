@@ -1,75 +1,70 @@
 ###############################################################################
 # DataSHIELD demo of docker installation
-# This R script is intended as a validation/demonstration of the DataSHIELD 
-# installation from the docker compose file at:
-#
-# A real world example of using this would be for the server side DataSHIELD
-# components (the stuff installed with docker compose) to be in a VM and for
-# this R script to be run from outside of that VM (probably through a reverse
-# proxy). This can also be run from within the VM that the server side 
-# components are installed on, just calling localhost instead of a proper URL.
+# This R script is intended as a validation/demonstration of the DataSHIELD
+# installation from the docker compose file at docker/docker-compose.yml.
 ###############################################################################
 
-# This will need to be installed locally. DSI and DSOpal can be installed from
-# the CRAN, but dsBaseClient needs:
-# install.packages('dsBaseClient', repos=c(getOption('repos'), 'https://cran.obiba.org'), dependencies = TRUE)
-library(DSI)
-library(DSOpal)
-library(dsBaseClient)
+# This will need to be installed locally.
+# library(DSI)
+# library(DSOpal)
+# library(dsBaseClient)
 
 # Can be useful for debugging SSL issues
-#library(curl)
-#curl::curl_version()
+# library(curl)
+# curl::curl_version()
 
 ################################################################################
 # Set all the options.
 
-# This should be a proper URL with https. If you are running this from within
-# VM then it is probably https://localhost:8443
+# Defaults target a local docker compose install (http://localhost:8880).
+# Override with environment variables, e.g. DS_URL=https://my.host Rscript client.R
+# Behind the nginx reverse proxy this should be a proper https URL; from within
+# the VM, https://localhost:8843 also works (self-signed certificate, see options below).
 #url <- "https://datashield2.liv.ac.uk"
-url <- "https://172.24.128.135"
+url <- Sys.getenv("DS_URL", "http://localhost:8880")
 
-# As defined in the docker-compose file
-#user <- "administrator"
-#password <- "password"
-
-user <- "demo_user"
-password <- "Demo_password1!"
-
+# As defined in the docker-compose file (OPAL_DEMO_USER_NAME / OPAL_DEMO_USER_PASSWORD)
+user <- Sys.getenv("DS_USER", "dsuser")
+password <- Sys.getenv("DS_PASSWORD", "P@ssw0rd")
 
 # When developing with self signed certificates, you may need to set these as
 # strict verification is the default. Do not use in production.
-options = "list(ssl_verifyhost = 0L, ssl_verifypeer = 0L)"
+options <- "list(ssl_verifyhost = 0L, ssl_verifypeer = 0L)"
 ################################################################################
-
 
 ################################################################################
 # Now log into the server for the DEMO.CNSIM1 table
+## Needed to define the OpalDriver class in the current environment
+DSOpal::Opal()
 builder <- DSI::newDSLoginBuilder()
-builder$append(server = "server1",
-               url = url,
-               user = user,
-               password = password,
-               options = options,
-               table = "DEMO.CNSIM1")
+builder$append(
+  server = "server1",
+  url = url,
+  user = user,
+  password = password,
+  options = options,
+  table = "CNSIM.CNSIM1"
+)
 logindata <- builder$build()
-connections <- DSI::datashield.login(logins = logindata, assign = TRUE, symbol = "D")
+connections <- DSI::datashield.login(
+  logins = logindata,
+  assign = TRUE,
+  symbol = "D"
+)
 
 # Check what packages are available. I would expect to see dsBase and resourcer
-datashield.pkg_status(connections)
+DSI::datashield.pkg_status(connections)
 
 # Check what data is available.
-datashield.tables(connections)
-
+DSI::datashield.tables(connections)
 
 ###############################################################################
-
-
-
 # Now start doing stuff with the data in the table linked to 'D'
-ds.colnames(x = 'D', datasources = connections)
-ds.dim(x = 'D', datasources = connections)
-ds.summary(x = 'D$LAB_HDL', datasources = connections)
-ds.mean(x = 'D$LAB_HDL', datasources = connections)
-datashield.errors()
+dsBaseClient::ds.colnames(x = 'D', datasources = connections)
+dsBaseClient::ds.dim(x = 'D', datasources = connections)
+dsBaseClient::ds.summary(x = 'D$LAB_HDL', datasources = connections)
+dsBaseClient::ds.mean(x = 'D$LAB_HDL', datasources = connections)
+DSI::datashield.errors()
 
+# Close the server-side R sessions cleanly.
+DSI::datashield.logout(connections)
