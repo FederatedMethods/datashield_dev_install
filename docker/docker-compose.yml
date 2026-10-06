@@ -1,37 +1,59 @@
+# Local DataSHIELD development server: Opal + MongoDB + Rock (R server).
+#
+#   docker compose up -d              # plain local Opal
+#   docker compose down -v            # stop AND wipe all data (fresh start)
+#
+# Needs Docker Compose >= 2.30 (for `post_start`).
+# To also run Jaeger and export OpenTelemetry traces, see docker-compose.jaeger.yml.
+name: datashield-dev
 services:
   opal:
-    image: obiba/opal:5.0
+    image: ${OPAL_IMAGE:-obiba/opal:5.0}
     ports:
-      - "8880:8080"
-      - "8843:8443"
-    links:
-      - rock
-      - mongodb
+      - "8880:8080"   # http://localhost:8880
+      - "8843:8443"   # https://localhost:8843 (self-signed certificate)
     environment:
-      - JAVA_OPTS=-Xms1G -Xmx8G -XX:+UseG1GC
-      - OPAL_ADMINISTRATOR_PASSWORD=password
-      - OPAL_DEMO_USER_NAME=demo_user
-      - OPAL_DEMO_USER_PASSWORD=Demo_password1!
-      - OPAL_DEMO_PROJECT=DEMO
-      - OPAL_DEMO_TABLE=CNSIM1
-      - OPAL_DEMO_SOURCE_DATA_URL=https://raw.githubusercontent.com/FederatedMethods/ds_sample_data/main/CNSIM/CNSIM1.csv
-      - OPAL_COHORT_PROJECT=COHORT
-      - OPAL_COHORT_TABLE=conditions1
-      - OPAL_COHORT_SOURCE_DATA_URL=https://raw.githubusercontent.com/FederatedMethods/ds_sample_data/main/synthea/conditionsa.csv
+      - JAVA_OPTS=${OPAL_JAVA_OPTS:--Xms512m -Xmx2g -XX:+UseG1GC}
+      - OPAL_ADMINISTRATOR_PASSWORD=${OPAL_ADMINISTRATOR_PASSWORD:-password}
+      - OPAL_DEMO_USER_NAME=${OPAL_DEMO_USER_NAME:-dsuser}
+      - OPAL_DEMO_USER_PASSWORD=${OPAL_DEMO_USER_PASSWORD:-P@ssw0rd}
+      # Project and tables for testing, imported by customise.sh as <project>.<table>
+      - CNSIM_PROJECT=${CNSIM_PROJECT:-CNSIM}
+      - CNSIM_TABLES=${CNSIM_TABLES:-CNSIM1 CNSIM2}
+      - CNSIM_BASE_URL=https://raw.githubusercontent.com/FederatedMethods/ds_sample_data/main/CNSIM
       - MONGO_HOST=mongodb
       - MONGO_PORT=27017
       - MONGODATA_DATABASE=mongodb
       - ROCK_HOSTS=rock:8085
-      #- CSRF_ALLOWED=datashield2.liv.ac.uk:*
-      - CSRF_ALLOWED=172.24.128.135:*
+      # Only needed when Opal is reached through the nginx reverse proxy:
+      #- CSRF_ALLOWED=your.host.example:*
     volumes:
-      - /datashield/1/opal:/srv
-      - ./customise.sh:/customise.sh
-    depends_on: 
-      - mongodb
+      # Opal home (config, logs, files). Named volume so it works on any host;
+      # use e.g. `/filestore/opal:/srv` instead if you want it on the host filesystem.
+      # Keep opal-data and mongo-data together: wipe both (`down -v`) or neither.
+      - opal-data:/srv
+      - ./customise.sh:/customise.sh:ro
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      rock:
+        condition: service_started
     post_start:
       - command: bash -c "/customise.sh"
+
   mongodb:
     image: mongo:6.0
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   rock:
     image: datashield/rock-base:latest
+
+volumes:
+  opal-data:
+  mongo-data:
