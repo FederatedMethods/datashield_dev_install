@@ -1,0 +1,28 @@
+# Adds a Rock server running the dsGeospatial profile to the local Opal stack.
+#
+# The image is NOT built here: it is built from the dsGeospatial repo
+# (see README, "Adding server-side packages"). Easiest is the helper script:
+#   ./deploy-geospatial.sh
+#
+# or by hand, after building the image:
+#   docker compose -f docker-compose.yml -f docker-compose.dsgeospatial.yml up -d
+#
+# or set COMPOSE_FILE=docker-compose.yml:docker-compose.dsgeospatial.yml in .env.
+#
+# Opal then has two R servers: profile "default" (stock rock) and
+# profile "ds-geospatial" (this one).
+services:
+  opal:
+    environment:
+      - ROCK_HOSTS=rock:8085,rock-geospatial:8085
+    depends_on:
+      rock-geospatial:
+        condition: service_started
+
+  rock-geospatial:
+    image: ${DSGEOSPATIAL_ROCK_IMAGE:-ds-geospatial-rock:0.0.0.9000}
+    pull_policy: never                         # built locally, never pulled
+    platform: ${ROCK_PLATFORM:-linux/amd64}    # base image is amd64 (emulated on Apple Silicon)
+    environment:
+      ROCK_ID: ds-geospatial-rock-01
+      ROCK_CLUSTER: ds-geospatial
