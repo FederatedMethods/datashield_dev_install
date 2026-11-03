@@ -92,16 +92,22 @@ Do this once, and again after rebuilding with a new version, because Opal rememb
 3. Make sure the profile is started and **initialised**, so Opal publishes the package's methods (for dsGeospatial: `MeanSdGpDS`, `groupcorDS`, `asFactorDS3`, `MoransI`, `Localmoran`).
 4. If `dsuser` is refused on the new profile, check the profile's permissions. `customise.sh` grants the DataSHIELD use permission globally, not per profile.
 
-### Use it from R
+### Use it within R
 
-Select the profile at login. The dsGeospatial analyst package, `dsGeospatialClient`, must be installed on the client side as well.
+Select the profile at login. The `{dsGeospatial}` analyst package, `{dsGeospatialClient}`, must be installed on the client side as well.
 
-    builder$append(
-      server = "server1", url = url, user = user, password = password,
-      table = "CNSIM.CNSIM1", profile = "ds-geospatial", options = options
-    )
-    # ... after datashield.login():
-    DSI::datashield.pkg_status(connections)   # dsBase and dsGeospatial should both be listed
+```r
+DSOpal::Opal()
+builder <- DSI::newDSLoginBuilder()
+builder$append(
+  server = "study1", url = "http://localhost:8880", user = "administrator",
+  password = "password", driver = "OpalDriver", profile = "ds-geospatial"
+)
+
+logindata <- builder$build()
+conns <- DSI::datashield.login(logins = logindata)
+DSI::datashield.pkg_status(conns)   # dsBase and dsGeospatial should both be listed
+```
 
 ### Adding another package
 
