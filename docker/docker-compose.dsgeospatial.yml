@@ -2,7 +2,7 @@
 #
 # The image is NOT built here: it is built from the dsGeospatial repo
 # (see README, "Adding server-side packages"). Easiest is the helper script:
-#   ./deploy-geospatial.sh
+#   ./deploy-dsgeospatial.sh
 #
 # or by hand, after building the image:
 #   docker compose -f docker-compose.yml -f docker-compose.dsgeospatial.yml up -d
