@@ -39,7 +39,7 @@ docker build \
 
 echo "==> Starting Opal with the dsGeospatial Rock"
 cd "$HERE"
-docker compose -f docker-compose.yml -f docker-compose.geospatial.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.dsgeospatial.yml up -d
 
 cat <<MSG
 
